@@ -37,3 +37,9 @@ yarn-error.*
 *.tsbuildinfo
 
 .env
+
+# iOS Native Build Artifacts
+ios/Pods/
+ios/build/
+ios/DerivedData/
+ios/**/xcuserdata/
