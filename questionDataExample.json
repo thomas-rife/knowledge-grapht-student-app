@@ -1,0 +1,31 @@
+[
+  {
+    "question_id": 33,
+    "question_type": "multiple-choice",
+    "prompt": "TEST",
+    "snippet": "",
+    "topics": ["A", "C"],
+    "answer": "A",
+    "answer_options": ["A", "B"]
+  },
+  {
+    "question_id": 34,
+    "question_type": "rearrange",
+    "prompt": "demo rearrange",
+    "snippet": "def x (): \n  pass",
+    "topics": ["topic 1", "topic 2"],
+    "answer": "def x (): \n  pass",
+    "answer_options": [
+      {
+        "professorView": [
+          { "text": "pass", "range": [13, 14, 15, 16], "position": [13, 17] },
+          { "text": "def x (): ", "range": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9], "position": [0, 10] },
+          { "text": "+=", "range": [], "position": [-1, -1], "isDistractor": true }
+        ]
+      },
+      {
+        "studentView": [{ "tokens": ["pass", "def x (): ", "+="], "problem": [null, "\n  ", null] }]
+      }
+    ]
+  }
+]

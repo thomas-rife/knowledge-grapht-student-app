@@ -1,0 +1,98 @@
+/**
+ * This file is separate from Themes.ts for the convenience of using
+ * {@link https://callstack.github.io/react-native-paper/docs/guides/theming#creating-dynamic-theme-colors | React Native Paper's dynamic color theme tool}
+ * to change the color theme.
+ *
+ * This is NOT the full color theme. It only defines the colors used by React Native Paper
+ * components, which should make up the majority of the app.
+ *
+ * @see Themes for the full color theme export, where it merges the React
+ * Navigation base theme (provided by Expo) with our custom React Native Paper theme.
+ */
+export const Colors = {
+  light: {
+    primary: 'rgb(0, 101, 142)',
+    onPrimary: 'rgb(255, 255, 255)',
+    primaryContainer: 'rgb(199, 231, 255)',
+    onPrimaryContainer: 'rgb(0, 30, 46)',
+    secondary: 'rgb(184, 26, 55)',
+    onSecondary: 'rgb(255, 255, 255)',
+    secondaryContainer: 'rgb(255, 218, 218)',
+    onSecondaryContainer: 'rgb(64, 0, 11)',
+    tertiary: 'rgb(98, 89, 124)',
+    onTertiary: 'rgb(255, 255, 255)',
+    tertiaryContainer: 'rgb(232, 221, 255)',
+    onTertiaryContainer: 'rgb(30, 22, 53)',
+    error: 'rgb(186, 26, 26)',
+    onError: 'rgb(255, 255, 255)',
+    errorContainer: 'rgb(255, 218, 214)',
+    onErrorContainer: 'rgb(65, 0, 2)',
+    background: 'rgb(252, 252, 255)',
+    onBackground: 'rgb(25, 28, 30)',
+    surface: 'rgb(252, 252, 255)',
+    onSurface: 'rgb(25, 28, 30)',
+    surfaceVariant: 'rgb(221, 227, 234)',
+    onSurfaceVariant: 'rgb(65, 72, 77)',
+    outline: 'rgb(113, 120, 126)',
+    outlineVariant: 'rgb(193, 199, 206)',
+    shadow: 'rgb(0, 0, 0)',
+    scrim: 'rgb(0, 0, 0)',
+    inverseSurface: 'rgb(46, 49, 51)',
+    inverseOnSurface: 'rgb(240, 241, 243)',
+    inversePrimary: 'rgb(132, 207, 255)',
+    elevation: {
+      level0: 'transparent',
+      level1: 'rgb(239, 244, 249)',
+      level2: 'rgb(232, 240, 246)',
+      level3: 'rgb(224, 235, 243)',
+      level4: 'rgb(222, 234, 241)',
+      level5: 'rgb(83, 89, 92)',
+    },
+    surfaceDisabled: 'rgba(25, 28, 30, 0.12)',
+    onSurfaceDisabled: 'rgba(25, 28, 30, 0.38)',
+    backdrop: 'rgba(43, 49, 54, 0.4)',
+  },
+
+  dark: {
+    primary: 'rgb(132, 207, 255)',
+    onPrimary: 'rgb(0, 52, 76)',
+    primaryContainer: 'rgb(0, 76, 108)',
+    onPrimaryContainer: 'rgb(199, 231, 255)',
+    secondary: 'rgb(255, 179, 180)',
+    onSecondary: 'rgb(104, 0, 23)',
+    secondaryContainer: 'rgb(146, 0, 37)',
+    onSecondaryContainer: 'rgb(255, 218, 218)',
+    tertiary: 'rgb(204, 192, 233)',
+    onTertiary: 'rgb(52, 43, 75)',
+    tertiaryContainer: 'rgb(74, 66, 99)',
+    onTertiaryContainer: 'rgb(232, 221, 255)',
+    error: 'rgb(255, 180, 171)',
+    onError: 'rgb(105, 0, 5)',
+    errorContainer: 'rgb(147, 0, 10)',
+    onErrorContainer: 'rgb(255, 180, 171)',
+    background: 'rgb(25, 28, 30)',
+    onBackground: 'rgb(226, 226, 229)',
+    surface: 'rgb(25, 28, 30)',
+    onSurface: 'rgb(226, 226, 229)',
+    surfaceVariant: 'rgb(65, 72, 77)',
+    onSurfaceVariant: 'rgb(193, 199, 206)',
+    outline: 'rgb(139, 145, 152)',
+    outlineVariant: 'rgb(65, 72, 77)',
+    shadow: 'rgb(0, 0, 0)',
+    scrim: 'rgb(0, 0, 0)',
+    inverseSurface: 'rgb(226, 226, 229)',
+    inverseOnSurface: 'rgb(46, 49, 51)',
+    inversePrimary: 'rgb(0, 101, 142)',
+    elevation: {
+      level0: 'transparent',
+      level1: 'rgb(30, 37, 41)',
+      level2: 'rgb(34, 42, 48)',
+      level3: 'rgb(37, 48, 55)',
+      level4: 'rgb(38, 50, 57)',
+      level5: 'rgb(40, 53, 62)',
+    },
+    surfaceDisabled: 'rgba(226, 226, 229, 0.12)',
+    onSurfaceDisabled: 'rgba(226, 226, 229, 0.38)',
+    backdrop: 'rgba(43, 49, 54, 0.4)',
+  },
+}
