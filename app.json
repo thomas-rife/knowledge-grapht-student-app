@@ -14,6 +14,9 @@
       "icon": {
         "dark": "./assets/images/icons/ios-dark.png",
         "light": "./assets/images/icons/ios-light.png"
+      },
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
@@ -53,9 +56,7 @@
         "projectId": "bc861f28-9f7b-47e7-b541-791a787e16c6"
       }
     },
-    "runtimeVersion": {
-      "policy": "appVersion"
-    },
+    "runtimeVersion": "1.0.0",
     "updates": {
       "url": "https://u.expo.dev/bc861f28-9f7b-47e7-b541-791a787e16c6"
     }
