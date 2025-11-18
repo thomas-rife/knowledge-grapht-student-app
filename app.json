@@ -10,12 +10,14 @@
     "icon": "./assets/images/icons/ios-light.png",
     "ios": {
       "supportsTablet": true,
+      "bundleIdentifier": "com.thomasrife.knowledgegrapht",
       "icon": {
         "dark": "./assets/images/icons/ios-dark.png",
         "light": "./assets/images/icons/ios-light.png"
       }
     },
     "android": {
+      "package": "com.thomasrife.knowledgegrapht",
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#ffffff"
