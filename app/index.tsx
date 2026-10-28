@@ -1,10 +1,22 @@
-import React, { useEffect, useRef } from 'react'
-import { StyleSheet, Text, View, Animated, PanResponder, Image } from 'react-native'
+import React, { useEffect, useRef, useState } from 'react'
+import {
+  StyleSheet,
+  Text,
+  View,
+  Animated,
+  PanResponder,
+  Image,
+} from 'react-native'
 import { useRouter } from 'expo-router'
-import { Button, useTheme } from 'react-native-paper'
+import { useTheme } from 'react-native-paper'
+import { supabase } from '@/supabaseClient'
+import LoadingIndicator from '@/assets/components/common/LoadingIndicator'
 
 export default function App() {
   const router = useRouter()
+
+  const [loading, setLoading] = useState(true)
+
   const pan = useRef(new Animated.ValueXY()).current
   const theme = useTheme()
 
@@ -27,8 +39,7 @@ export default function App() {
     })
   ).current
 
-  // Swipe indicator animation
-  const swipeIndicatorOpacity = React.useRef(new Animated.Value(1)).current
+  const swipeIndicatorOpacity = useRef(new Animated.Value(1)).current
 
   useEffect(() => {
     // Create a pulsing animation for the swipe indicator
@@ -46,7 +57,40 @@ export default function App() {
         }),
       ])
     ).start()
-  }, [])
+  }, [swipeIndicatorOpacity])
+
+  useEffect(() => {
+    // Check for existing session on app start
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session) {
+        // User is logged in, go directly to classes
+        router.replace('/(tabs)/classes')
+      } else {
+        // No session, show landing page
+        setLoading(false)
+      }
+    })
+
+    // Listen for auth changes
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session) {
+        router.replace('/(tabs)/classes')
+      }
+    })
+
+    return () => subscription.unsubscribe()
+  }, [router])
+
+  // Show loading while checking session
+  if (loading) {
+    return (
+      <View style={styles.container}>
+        <LoadingIndicator />
+      </View>
+    )
+  }
 
   return (
     <Animated.View

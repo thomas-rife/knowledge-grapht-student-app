@@ -7,7 +7,7 @@ podfile_properties = JSON.parse(File.read(File.join(__dir__, 'Podfile.properties
 ENV['RCT_NEW_ARCH_ENABLED'] = '0' if podfile_properties['newArchEnabled'] == 'false'
 ENV['EX_DEV_CLIENT_NETWORK_INSPECTOR'] = podfile_properties['EX_DEV_CLIENT_NETWORK_INSPECTOR']
 
-platform :ios, podfile_properties['ios.deploymentTarget'] || '15.1'
+platform :ios, podfile_properties['ios.deploymentTarget'] || '16.4'
 install! 'cocoapods',
   :deterministic_uuids => false
 
@@ -49,6 +49,65 @@ target 'KnowledgeGrapht' do
       :mac_catalyst_enabled => false,
       :ccache_enabled => podfile_properties['apple.ccacheEnabled'] == 'true',
     )
+
+    # Xcode 26.4+ rejects fmt 11.0.2's consteval format-string path. React Native
+    # ships this fmt version, so disable that path until React Native upgrades fmt.
+    fmt_base = File.join(installer.sandbox.root, 'fmt', 'include', 'fmt', 'base.h')
+    if File.exist?(fmt_base)
+      content = File.read(fmt_base)
+      patched = content.gsub(
+        /^#\s*define FMT_USE_CONSTEVAL 1$/,
+        '#  define FMT_USE_CONSTEVAL 0'
+      )
+
+      if patched != content
+        File.chmod(0644, fmt_base)
+        File.write(fmt_base, patched)
+      end
+    end
+
+    # React Native's generated codegen phase passes both script paths through
+    # `sh -c` as one unquoted command. That breaks when the checkout path has a
+    # space (as this one does), so source the environment and run codegen using
+    # two independently quoted paths.
+    installer.pods_project.targets.each do |target|
+      next unless target.name == 'ReactCodegen'
+
+      target.shell_script_build_phases.each do |phase|
+        next unless phase.name == '[CP-User] Generate Specs'
+
+        phase.shell_script = phase.shell_script.sub(
+          '/bin/sh -c "$WITH_ENVIRONMENT $SCRIPT_PHASES_SCRIPT"',
+          ". \"$WITH_ENVIRONMENT\"\n\"$SCRIPT_PHASES_SCRIPT\""
+        )
+      end
+    end
+
+    # Expo's Constants and Updates phases have the same issue: `bash -c`
+    # reparses an absolute script path without preserving its quoting. Constants
+    # also calls `basename $PROJECT_DIR` without quotes, so give it a safe sentinel
+    # while explicitly preserving the real project root.
+    expo_script_phases = {
+      'EXConstants' => '[CP-User] Generate app.config for prebuilt Constants.manifest',
+      'EXUpdates' => '[CP-User] Generate updates resources for expo-updates'
+    }
+    installer.pods_project.targets.each do |target|
+      phase_name = expo_script_phases[target.name]
+      next unless phase_name
+
+      target.shell_script_build_phases.each do |phase|
+        next unless phase.name == phase_name
+
+        phase.shell_script = if target.name == 'EXConstants'
+          <<~SCRIPT
+            PROJECT_DIR=Pods PROJECT_ROOT="$PODS_ROOT/../.." \
+              bash -l "$PODS_TARGET_SRCROOT/../scripts/get-app-config-ios.sh"
+          SCRIPT
+        else
+          phase.shell_script.sub('bash -l -c ', 'bash -l ')
+        end
+      end
+    end
 
     # This is necessary for Xcode 14, because it signs resource bundles by default
     # when building for devices.

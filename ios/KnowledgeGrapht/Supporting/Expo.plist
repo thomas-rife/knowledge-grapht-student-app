@@ -12,5 +12,7 @@
     <string>1.0.0</string>
     <key>EXUpdatesURL</key>
     <string>https://u.expo.dev/bc861f28-9f7b-47e7-b541-791a787e16c6</string>
+    <key>EXUpdatesEnableBsdiffPatchSupport</key>
+    <true/>
   </dict>
 </plist>

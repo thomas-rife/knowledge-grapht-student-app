@@ -1,103 +1,64 @@
-import React, { useEffect } from 'react'
-import { StyleSheet, View } from 'react-native'
+import React from 'react'
+import { StyleSheet } from 'react-native'
 import { useTheme } from 'react-native-paper'
-import Animated, {
-  useSharedValue,
-  useAnimatedStyle,
-  withRepeat,
-  withTiming,
-  Easing,
-  interpolate,
-  cancelAnimation,
-} from 'react-native-reanimated'
+import Svg, { Path as SvgPath } from 'react-native-svg'
 
 interface EdgeProps {
   start: { x: number; y: number }
   end: { x: number; y: number }
 }
 
-const speed = 2000
-const thickness = 15
+const strokeWidth = 3
 
 const Path = ({ start, end }: EdgeProps) => {
-  // Animation progress value (0 to 1)
   const theme = useTheme()
-  const progress = useSharedValue(0)
 
-  const width = Math.sqrt(Math.pow(end.x - start.x, 2) + Math.pow(end.y - start.y, 2))
-  const angle = Math.atan2(end.y - start.y, end.x - start.x)
+  // Calculate control points for Bezier curve
+  const dx = end.x - start.x
+  const dy = end.y - start.y
 
-  // Set up the animation on component mount
-  useEffect(() => {
-    progress.value = 0
-    // Create a repeating animation
-    progress.value = withRepeat(
-      withTiming(1, {
-        duration: speed,
-        easing: Easing.inOut(Easing.ease),
-      }),
-      -1, // Repeat infinitely
-      false // Don't reverse the animation
-    )
+  // Control point offset - this creates the curve
+  const offset = Math.sqrt(dx * dx + dy * dy) * 0.25
 
-    // Clean up the animation when component unmounts
-    return () => cancelAnimation(progress)
-  }, [])
+  // Calculate control points for a smooth curve
+  const cp1x = start.x + dx * 0.25
+  const cp1y = start.y + dy * 0.25 + offset
+  const cp2x = start.x + dx * 0.75
+  const cp2y = start.y + dy * 0.75 - offset
 
-  // Create the animated style for the ripple effect
-  const animatedStyle = useAnimatedStyle(() => {
-    return {
-      position: 'absolute',
-      backgroundColor: theme.colors.primary,
-      opacity: interpolate(progress.value, [0, 0.2, 0.8, 1], [0.1, 0.7, 0.7, 0.1]),
-      width: width,
-      height: thickness,
-      transform: [
-        {
-          translateX: interpolate(progress.value, [0, 1], [-width, width]),
-        },
-      ],
-    }
-  })
+  // Create SVG path string for cubic Bezier curve
+  const pathData = `M ${start.x} ${start.y} C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${end.x} ${end.y}`
+
+  // Calculate bounding box for the SVG
+  const minX = Math.min(start.x, end.x, cp1x, cp2x) - 10
+  const minY = Math.min(start.y, end.y, cp1y, cp2y) - 10
+  const maxX = Math.max(start.x, end.x, cp1x, cp2x) + 10
+  const maxY = Math.max(start.y, end.y, cp1y, cp2y) + 10
+  const width = maxX - minX
+  const height = maxY - minY
 
   return (
-    <View
+    <Svg
       style={[
-        styles.edge,
+        StyleSheet.absoluteFill,
         {
-          left: start.x,
-          top: start.y,
-          transform: [
-            {
-              rotate: `${angle}rad`,
-            },
-          ],
+          left: minX,
+          top: minY,
+          width,
+          height,
         },
       ]}
+      viewBox={`${minX} ${minY} ${width} ${height}`}
     >
-      <View
-        style={[
-          styles.ripple,
-          {
-            width,
-            height: thickness,
-            backgroundColor: theme.colors.surfaceVariant,
-          },
-        ]}
-      >
-        <Animated.View style={animatedStyle} />
-      </View>
-    </View>
+      <SvgPath
+        d={pathData}
+        stroke={theme.colors.outline}
+        strokeWidth={strokeWidth}
+        fill="none"
+        strokeLinecap="round"
+      />
+    </Svg>
   )
 }
-
-const styles = StyleSheet.create({
-  edge: { position: 'absolute', transformOrigin: 'left' },
-  ripple: {
-    overflow: 'hidden',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-})
 
 export default Path

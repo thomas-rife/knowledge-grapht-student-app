@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { View, StyleSheet, KeyboardAvoidingView, Platform } from 'react-native'
 import { Portal, Dialog, Text, Button, useTheme, TextInput } from 'react-native-paper'
+import LoadingButton from '@/assets/components/common/LoadingButton'
 
 interface OtpInputModalProps {
   visible: boolean
@@ -133,14 +134,14 @@ const InputCodeModal = ({ visible, onClose, onSubmit }: OtpInputModalProps) => {
               <Button onPress={onClose} mode="text" disabled={enrolling}>
                 Cancel
               </Button>
-              <Button
+              <LoadingButton
                 onPress={handleSubmit}
                 mode="contained"
                 loading={enrolling}
                 disabled={!isOtpComplete || enrolling}
               >
                 Enroll
-              </Button>
+              </LoadingButton>
             </Dialog.Actions>
           </Dialog>
         </View>

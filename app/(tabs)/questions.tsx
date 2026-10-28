@@ -1,14 +1,22 @@
-import React, { useState, useEffect, useMemo, memo } from 'react'
-import { View, StyleSheet, ScrollView, ViewStyle, Image, Linking } from 'react-native'
+import React, { useState, useEffect, useMemo, useRef } from 'react'
+import {
+  View,
+  StyleSheet,
+  ScrollView,
+  Image,
+  Linking,
+  Pressable,
+  Alert,
+} from 'react-native'
+import { SvgUri } from 'react-native-svg'
 import {
   Text,
   Surface,
   Button,
-  Portal,
-  Dialog,
   useTheme,
   Icon,
-  ActivityIndicator,
+  Chip,
+  ProgressBar,
 } from 'react-native-paper'
 import { useRouter, useLocalSearchParams, useNavigation } from 'expo-router'
 import MultipleChoiceQuestion from '@/assets/components/lessons/MultipleChoiceQuestion'
@@ -19,6 +27,10 @@ import {
   RearrangeData,
 } from '@/assets/components/lessons/Questions.d'
 import { supabase } from '@/supabaseClient'
+import { syncStudyReminders } from '@/services/notifications'
+import LoadingIndicator from '@/assets/components/common/LoadingIndicator'
+import QuizExitDialog from '@/assets/components/lessons/QuizExitDialog'
+import { BlurTargetView } from 'expo-blur'
 
 // Resolves an image URL that could be absolute, a Supabase public object URL, or a bare storage path.
 function resolveImageUrl(raw?: string | null): string {
@@ -60,38 +72,65 @@ const Questions = () => {
   const router = useRouter()
   const navigation = useNavigation()
   const theme = useTheme()
-  const { classId, lessonName } = useLocalSearchParams()
+  const {
+    classId,
+    className,
+    lessonName,
+    review,
+    topic,
+    reviewQuizSize,
+    quizMode,
+    launchSource,
+    recommendationSnapshotId,
+  } = useLocalSearchParams()
 
   /* State variables - controls for visible components */
   const [uid, setUid] = useState<string | null>(null)
-  const [authReady, setAuthReady] = useState(false)
   const [loading, setLoading] = useState<boolean>(true)
   const [quizComplete, setComplete] = useState<boolean>(false)
   const [showExitDialog, setExitDialog] = useState<boolean>(false)
   const [showFeedback, setFeedback] = useState<boolean>(false)
-  const [showQuizTopics, setQuizTopics] = useState<boolean>(false)
+  const [showQuestionBreakdown, setShowQuestionBreakdown] = useState<boolean>(false)
 
   /* Quiz variables - handles data for quiz processing */
-  const [questions, setQuestions] = useState<Array<Question & { image_url?: string | null }>>([])
+  const [questions, setQuestions] = useState<(Question & { image_url?: string | null })[]>([])
   const [questionIndex, setQuestionIndex] = useState(0)
-  const [finalAnswers, setFinalAnswers] = useState<string[]>([])
   const [currentAnswer, setCurrentAnswer] = useState('')
   const [results, setResults] = useState<boolean[]>([])
+  const [submittedAnswers, setSubmittedAnswers] = useState<(string | null)[]>([])
   const [finalPushed, setFinalPushed] = useState(false)
   const [imageFailed, setImageFailed] = useState<Record<number, boolean>>({})
+  const allowNavigationRef = useRef(false)
+  const submittedQuestionIndexRef = useRef<number | null>(null)
+  const [quizSessionId, setQuizSessionId] = useState<string | null>(null)
 
   const currentQuestion = questions[questionIndex]
+  const [isSubmitting, setIsSubmitting] = useState<boolean>(false)
+  const [isExiting, setIsExiting] = useState<boolean>(false) // Prevent double-tap on exit
+  const blurTarget = useRef<View | null>(null)
 
   const memoizedQuestion = useMemo<MultipleChoiceData | RearrangeData | null>(() => {
     if (!currentQuestion) return null
 
     switch (currentQuestion.question_type) {
-      case 'multiple-choice':
+      case 'multiple-choice': {
+        const originalOptions = currentQuestion.answer_options as string[]
+        const opts = [...originalOptions]
+
+        // Fisher Yates shuffle so options appear in random order each time
+        for (let i = opts.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1))
+          const temp = opts[i]
+          opts[i] = opts[j]
+          opts[j] = temp
+        }
+
         return {
           ...currentQuestion,
-          answer_options: currentQuestion.answer_options as string[],
+          answer_options: opts,
           question_type: 'multiple-choice',
         }
+      }
       case 'rearrange':
         return {
           ...currentQuestion,
@@ -105,22 +144,20 @@ const Questions = () => {
   useEffect(() => {
     let isMounted = true
 
-    console.log('Auth useEffect started')
+    // console.log('Auth useEffect started')
 
     // Get initial session
     supabase.auth.getSession().then(({ data, error }) => {
-      console.log('getSession full response:', {
-        session: data?.session,
-        user: data?.session?.user,
-        userId: data?.session?.user?.id,
-        error: error,
-      })
+      // console.log('getSession full response:', {
+      //   session: data?.session,
+      //   user: data?.session?.user,
+      //   userId: data?.session?.user?.id,
+      //   error: error,
+      // })
       if (isMounted && data?.session?.user?.id) {
         setUid(data.session.user.id)
-        setAuthReady(true)
       } else if (isMounted) {
         console.warn('No session found in getSession')
-        setAuthReady(true) // Still set to true so app doesn't hang
       }
     })
 
@@ -128,12 +165,11 @@ const Questions = () => {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event, session) => {
-      console.log('Auth state change event:', event)
-      console.log('Auth state change session:', session)
-      console.log('Auth state change userId:', session?.user?.id)
+      // console.log('Auth state change event:', event)
+      // console.log('Auth state change session:', session)
+      // console.log('Auth state change userId:', session?.user?.id)
       if (isMounted) {
         setUid(session?.user?.id ?? null)
-        setAuthReady(true)
       }
     })
 
@@ -150,69 +186,66 @@ const Questions = () => {
       try {
         const base = (process.env.EXPO_PUBLIC_API_BASE_URL || '').replace(/\/+$/, '')
         const cid = String(classId)
-        const rawLesson = String(lessonName ?? '')
-        const lessonSlug = encodeURIComponent(rawLesson)
-        const isNumericLesson = /^\d+$/.test(rawLesson)
-        const lid = isNumericLesson ? rawLesson : ''
 
-        // Attach Supabase session token so backend verifyUser passes
+        // Get auth token
         const {
           data: { session },
         } = await supabase.auth.getSession()
-        const authHeader = session?.access_token
-          ? { Authorization: `Bearer ${session.access_token}` }
-          : {}
-
-        const candidates = [
-          `${base}/mobile/classes/${cid}/lessons/${lessonSlug}/questions`,
-          `${base}/user/enrolled-class/${cid}/lesson/${lessonSlug}/questions`,
-          ...(isNumericLesson
-            ? [
-                `${base}/mobile/classes/${cid}/lessons/${lid}/questions`,
-                `${base}/user/enrolled-class/${cid}/lesson/${lid}/questions`,
-                `${base}/mobile/questions?class_id=${cid}&lesson_id=${lid}`,
-              ]
-            : []),
-        ]
-        console.log('Questions fetch trying routes:', candidates)
-
-        let parsed: any = null
-        let ok = false
-        let lastStatus = 0
-        let lastPreview = ''
-        let lastTried = ''
-
-        for (const url of candidates) {
-          lastTried = url
-          const resp = await fetch(url, { headers: { Accept: 'application/json', ...authHeader } })
-          lastStatus = resp.status
-          const raw = await resp.text()
-          try {
-            parsed = raw ? JSON.parse(raw) : null
-          } catch {
-            lastPreview = raw?.slice(0, 200) || ''
-            continue
-          }
-          if (!resp.ok) {
-            lastPreview =
-              typeof parsed?.error === 'string' ? parsed.error : raw?.slice(0, 200) || ''
-            continue
-          }
-          ok = true
-          break
+        const authHeader: Record<string, string> = {}
+        if (session?.access_token) {
+          authHeader.Authorization = `Bearer ${session.access_token}`
         }
 
-        if (!ok) {
-          console.warn('Questions fetch failed across routes:', {
-            lastStatus,
-            lastUrl: lastTried,
-            preview: lastPreview,
-          })
-          throw new Error(
-            `questions endpoint not found or returned non-JSON (status ${lastStatus})`
-          )
-        }
+        const requestedQuizMode =
+          quizMode === 'daily_review' ||
+          quizMode === 'topic_practice' ||
+          quizMode === 'lesson'
+            ? quizMode
+            : review === '1'
+              ? 'topic_practice'
+              : 'lesson'
+        const requestedQuizSize = Number(reviewQuizSize)
+        const lessonId = Number(lessonName)
 
+        const resp = await fetch(`${base}/user/quiz-sessions/start`, {
+          method: 'POST',
+          headers: {
+            Accept: 'application/json',
+            'Content-Type': 'application/json',
+            ...authHeader,
+          },
+          body: JSON.stringify({
+            class_id: Number(cid),
+            quiz_mode: requestedQuizMode,
+            launch_source:
+              typeof launchSource === 'string' && launchSource
+                ? launchSource
+                : requestedQuizMode === 'lesson'
+                  ? 'lesson_screen'
+                  : requestedQuizMode === 'daily_review'
+                    ? 'today'
+                    : 'graph_node',
+            lesson_id: requestedQuizMode === 'lesson' && Number.isFinite(lessonId) ? lessonId : null,
+            topic: typeof topic === 'string' ? topic : null,
+            recommendation_snapshot_id:
+              typeof recommendationSnapshotId === 'string' ? recommendationSnapshotId : null,
+            num_questions:
+              Number.isFinite(requestedQuizSize) && requestedQuizSize > 0
+                ? requestedQuizSize
+                : 10,
+          }),
+        })
+
+        const parsed = await resp.json().catch(() => null)
+        if (!resp.ok || !parsed) {
+          throw new Error(parsed?.error || `Quiz could not be started (${resp.status})`)
+        }
+        if (!parsed.quiz_session_id) {
+          throw new Error('Quiz session was not created.')
+        }
+        setQuizSessionId(String(parsed.quiz_session_id))
+
+        // COMMON: Parse questions (works for both review and lesson quizzes)
         const rows = Array.isArray(parsed) ? parsed : parsed?.questions
         if (!Array.isArray(rows)) {
           console.warn('Questions fetch unexpected JSON shape:', parsed)
@@ -229,33 +262,19 @@ const Questions = () => {
           answer_options: q.answer_options,
           lesson_id: q.lesson_id,
           image_url: q.image_url ?? null,
-        })) as Array<Question & { image_url?: string | null }>
+        })) as (Question & { image_url?: string | null })[]
 
         if (receivedQuestions.length < 1) {
           throw new Error('This quiz has no questions.')
         }
 
         setQuestions(receivedQuestions)
-        setFinalAnswers(new Array(receivedQuestions.length).fill('**INCOMPLETE**'))
         setResults(new Array(receivedQuestions.length).fill(false))
-
-        // Debug: log first image URLs, if any
-        const firstWithImg = receivedQuestions.find(q => q.image_url)
-        if (firstWithImg) {
-          console.log('[Questions] example image_url raw:', firstWithImg.image_url)
-          console.log(
-            '[Questions] example image_url resolved:',
-            resolveImageUrl(firstWithImg.image_url || '')
-          )
-        }
+        setSubmittedAnswers(new Array(receivedQuestions.length).fill(null))
       } catch (error: any) {
         alert(`Failed to load quiz: ${error?.message ?? String(error)}`)
         console.error('Questions fetch failed:', error)
-        console.log('Questions fetch debug ->', {
-          classId,
-          lessonName,
-          api: process.env.EXPO_PUBLIC_API_BASE_URL,
-        })
+        allowNavigationRef.current = true
         router.dismiss()
       } finally {
         setLoading(false)
@@ -263,80 +282,214 @@ const Questions = () => {
     }
 
     fetchQuestions()
-  }, [])
+  }, [
+    classId,
+    launchSource,
+    lessonName,
+    quizMode,
+    recommendationSnapshotId,
+    review,
+    reviewQuizSize,
+    router,
+    topic,
+  ])
 
-  /* Sets header content for the view: Custom back button and quiz progress dots */
+  /* Keep quiz controls readable and balanced in the native stack header. */
   useEffect(() => {
-    navigation.setOptions({
-      headerLeft: () => (
-        <Button icon="backspace-outline" onPress={handleBackButton} style={{ left: -10 }}>
-          Quit
-        </Button>
-      ),
-      // Nonexistent button just to help with aligning the title
-      headerRight: () => (
-        <Button style={{ right: -10 }}>
-          <Text> </Text>
-        </Button>
-      ),
-      headerTitle: renderProgressDots,
-    })
-  })
+    const questionNumber = questions.length > 0 ? Math.min(questionIndex + 1, questions.length) : 0
 
-  /* Navigation functions */
-  /**
-   * Returns user to the appropriate Lessons page.
-   * If their quiz is incomplete, shows an extra confirmation to communicate that
-   * their incomplete questions will be marked incorrect for their statistics.
-   */
-  const handleBackButton = () => {
-    if (!quizComplete) {
+    navigation.setOptions({
+      headerBackVisible: false,
+      headerTitle: quizComplete ? 'Results' : 'Practice',
+      headerLeft: quizComplete
+        ? () => null
+        : () => (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Quit quiz"
+              hitSlop={10}
+              onPress={() => setExitDialog(true)}
+              style={({ pressed }) => [styles.headerQuit, pressed && styles.headerActionPressed]}
+            >
+              <Icon source="close" size={19} color={theme.colors.primary} />
+              <Text variant="labelLarge" style={{ color: theme.colors.primary }}>
+                Quit
+              </Text>
+            </Pressable>
+          ),
+      headerRight: quizComplete
+        ? () => null
+        : () => (
+            <Text variant="labelLarge" style={styles.headerProgress}>
+              {questions.length > 0 ? `${questionNumber} of ${questions.length}` : ''}
+            </Text>
+          ),
+    })
+  }, [navigation, questionIndex, questions.length, quizComplete, theme.colors.primary])
+
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('beforeRemove', (event: any) => {
+      if (allowNavigationRef.current) return
+
+      event.preventDefault()
       setExitDialog(true)
-    } else {
-      handleConfirmExit()
-    }
-  }
+    })
+
+    return unsubscribe
+  }, [navigation])
 
   /**
    * Sends the quiz results to the database to update knowledge graphs.
-   * Dismisses the screen, taking users back to the Lessons screen.
+   * Dismisses the screen, returning users to the surface that launched the quiz.
    */
   const handleConfirmExit = async () => {
+    if (isExiting || isSubmitting) return
+    setIsExiting(true)
+    let snapshotWarning: string | null = null
+
     try {
       if (!finalPushed) {
-        // 1) aggregate this quiz
-        // 1) aggregate this quiz
-        const perTopic = summarizeTopicsForAttempt(questions, results) // [{topic, attempts, correct}, ...]
-
-        // 2) send per-topic deltas to backend
         const base = (process.env.EXPO_PUBLIC_API_BASE_URL || '').replace(/\/+$/, '')
         const { data: sessData } = await supabase.auth.getSession()
         const token = sessData?.session?.access_token ?? null
-        const authHeader = token ? { Authorization: `Bearer ${token}` } : {}
+        const authHeader: Record<string, string> = {}
+        if (token) {
+          authHeader.Authorization = `Bearer ${token}`
+        }
 
-        for (const row of perTopic) {
-          await fetch(`${base}/update-node-progress`, {
+        if (!quizSessionId) {
+          throw new Error('The quiz session ID is missing.')
+        }
+
+        if (!quizComplete) {
+          const resp = await fetch(`${base}/user/quiz-sessions/${quizSessionId}/abandon`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeader },
+          })
+          const payload = await resp.json().catch(() => null)
+          if (!resp.ok) {
+            throw new Error(payload?.error || `Quiz could not be abandoned (${resp.status})`)
+          }
+        } else {
+          const perTopic = summarizeTopicsForAttempt(questions, results)
+          for (const row of perTopic) {
+            const progressResp = await fetch(`${base}/user/update-node-progress`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', ...authHeader },
+              body: JSON.stringify({
+                class_id: Number(classId),
+                topics: [row.topic],
+                attemptsDelta: row.attempts,
+                correctDelta: row.correct,
+              }),
+            })
+            if (!progressResp.ok) {
+              throw new Error(`Topic progress could not be updated (${progressResp.status})`)
+            }
+          }
+
+          const totalCorrect = results.filter(Boolean).length
+          const totalQuestions = questions.length
+          const timezone = (() => {
+            try {
+              return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+            } catch {
+              return 'UTC'
+            }
+          })()
+
+          const resp = await fetch(`${base}/user/quiz-sessions/${quizSessionId}/complete`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', ...authHeader },
             body: JSON.stringify({
-              student_id: uid,
-              class_id: Number(classId),
-              topics: [row.topic],
-              // send deltas so backend can aggregate
-              attemptsDelta: row.attempts,
-              correctDelta: row.correct,
+              answered_count: totalQuestions,
+              num_correct: totalCorrect,
+              timezone,
             }),
           })
+
+          const payload = await resp.json().catch(() => null)
+          if (!resp.ok) {
+            throw new Error(payload?.error || `Quiz could not be completed (${resp.status})`)
+          }
+
+          if (!payload?.review_snapshot_saved) {
+            snapshotWarning =
+              typeof payload?.review_snapshot_error === 'string' && payload.review_snapshot_error
+                ? payload.review_snapshot_error
+                : 'The recommendation service did not create a snapshot.'
+            console.warn('Quiz completed without a recommendation snapshot:', snapshotWarning)
+          }
+
+          if (payload?.streak) {
+            void syncStudyReminders({
+              classId: String(classId),
+              className: typeof className === 'string' ? className : null,
+              currentStreak: payload.streak.current_streak,
+              studiedToday: payload.streak.studied_today,
+              nextReviewDueOn: payload.streak.next_review_due_on,
+              cadenceDays: payload.streak.cadence_days,
+            })
+          }
         }
 
         setFinalPushed(true)
       }
     } catch (e) {
-      console.error('Final schedule push failed:', e)
-    } finally {
-      router.dismiss()
+      setIsExiting(false)
+      console.error('Quiz exit failed:', e)
+      alert(e instanceof Error ? e.message : 'Quiz progress could not be saved. Please try again.')
+      return
+    }
+
+    setIsExiting(false)
+    setExitDialog(false)
+    allowNavigationRef.current = true
+    const fallbackDestination =
+      launchSource === 'graph_node'
+        ? {
+            pathname: '/[classId]/graph' as const,
+            params: {
+              classId: String(classId),
+              className: typeof className === 'string' ? className : '',
+            },
+          }
+        : quizMode === 'lesson'
+          ? {
+              pathname: '/[classId]/lessons' as const,
+              params: {
+                classId: String(classId),
+                className: typeof className === 'string' ? className : '',
+              },
+            }
+          : {
+              pathname: '/[classId]/today' as const,
+              params: {
+                classId: String(classId),
+                className: typeof className === 'string' ? className : '',
+              },
+            }
+
+    if (router.canGoBack()) {
+      router.back()
+    } else {
+      router.replace(fallbackDestination)
+    }
+
+    if (snapshotWarning) {
+      Alert.alert(
+        'Review recommendation not updated',
+        `Your quiz results and streak were saved, but Today could not refresh its recommendation. ${snapshotWarning}`
+      )
     }
   }
+
+  const resultReturnLabel =
+    launchSource === 'graph_node'
+      ? 'Back to Graph'
+      : quizMode === 'lesson'
+        ? 'Back to Lessons'
+        : 'Back to Today'
 
   /* Quiz functions */
   /**
@@ -345,6 +498,7 @@ const Questions = () => {
    * @param answer The student's current full answer as a string.
    */
   const handleSelectAnswer = (answer: string) => {
+    if (submittedQuestionIndexRef.current === questionIndex) return
     setCurrentAnswer(answer)
   }
 
@@ -353,41 +507,96 @@ const Questions = () => {
    * Additionally,
    */
   const handleSubmitAnswer = async () => {
-    if (!currentAnswer) return
+    if (!currentAnswer || submittedQuestionIndexRef.current === questionIndex) return
+    if (!uid || !quizSessionId) {
+      Alert.alert(
+        'Quiz connection unavailable',
+        'The quiz is not ready to save answers yet. Check your connection and try again.'
+      )
+      return
+    }
 
-    let uidNow = uid
+    // Refs update synchronously, so a second tap is blocked even before React
+    // re-renders the disabled/loading state on the button.
+    submittedQuestionIndexRef.current = questionIndex
+    setIsSubmitting(true)
 
     const currentQuestion = questions[questionIndex]
-    const isCorrect = currentAnswer === currentQuestion.answer
+    const studentId = uid
+    const sessionId = quizSessionId
+    const submittedAnswer = currentAnswer
+    const isCorrect = submittedAnswer === currentQuestion.answer
     const answeredAt = new Date().toISOString()
+    const reconcilePersistedAnswer = async () => {
+      const { data: existingAnswer, error: reconcileError } = await supabase
+        .from('student_question_answers')
+        .select('answer_id, selected_answer')
+        .eq('quiz_session_id', sessionId)
+        .eq('question_id', currentQuestion.question_id)
+        .eq('student_id', studentId)
+        .order('answered_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+
+      return !reconcileError && existingAnswer?.selected_answer === submittedAnswer
+    }
+    const applySavedAnswer = () => {
+      setSubmittedAnswers(old => old.with(questionIndex, submittedAnswer))
+      setResults(old => old.with(questionIndex, isCorrect))
+      setFeedback(true)
+    }
 
     try {
-      const { error: insertErr } = await supabase.from('student_question_answers').insert({
-        student_id: uidNow,
+      const answerPayload = {
+        student_id: studentId,
         class_id: Number(classId),
         lesson_id: currentQuestion.lesson_id || null,
         question_id: currentQuestion.question_id,
         is_correct: isCorrect,
         answered_at: answeredAt,
-        selected_answer: currentAnswer,
-        raw_response: { selected: currentAnswer },
-      })
-      if (insertErr) {
-        console.error('Failed to record student answer:', insertErr)
+        selected_answer: submittedAnswer,
+        raw_response: { selected: submittedAnswer },
+        quiz_session_id: sessionId,
       }
-    } catch (e) {
-      console.error('Error recording student answer:', e)
-    }
+      const { error: insertErr } = await supabase
+        .from('student_question_answers')
+        .insert(answerPayload)
 
-    setFinalAnswers(old => old.with(questionIndex, currentAnswer))
-    setResults(old => old.with(questionIndex, isCorrect))
-    setFeedback(true)
+      if (insertErr) {
+        // A connection can fail after the database accepted the write. Reconcile
+        // against this session/question before asking the student to retry.
+        const writeWasRecovered = await reconcilePersistedAnswer()
+        if (!writeWasRecovered) {
+          throw new Error(insertErr.message || 'The answer could not be saved.')
+        }
+      }
+
+      applySavedAnswer()
+    } catch (error) {
+      // Supabase normally returns an error object, but a lower-level fetch can
+      // throw. Reconcile that ambiguous case before presenting a retry.
+      const writeWasRecovered = await reconcilePersistedAnswer().catch(() => false)
+      if (writeWasRecovered) {
+        applySavedAnswer()
+        return
+      }
+
+      submittedQuestionIndexRef.current = null
+      console.error('Error recording student answer:', error)
+      Alert.alert(
+        'Answer not saved',
+        'Check your connection and try again. Your quiz is still open and this question has not been counted.'
+      )
+    } finally {
+      setIsSubmitting(false)
+    }
   }
 
   /**
    * Progresses the quiz after the student is done viewing their feedback.
    */
   const handleNextQuestion = () => {
+    submittedQuestionIndexRef.current = null
     setQuestionIndex(questionIndex + 1)
     if (questions && questionIndex < questions.length - 1) {
       setCurrentAnswer('')
@@ -398,41 +607,6 @@ const Questions = () => {
   }
 
   /* Rendering functions */
-  /**
-   * For use in the header.
-   * Sets the highlighted dot for the current question and colors dots for previous
-   *    questions based on correctness.
-   */
-  const renderProgressDots = () => {
-    return (
-      <ScrollView
-        style={styles.dotsContainer}
-        contentContainerStyle={styles.allDots}
-        horizontal={true}
-        showsHorizontalScrollIndicator={false}
-      >
-        {questions.map((_, index) => {
-          const baseDotStyle: ViewStyle = {
-            ...styles.dot,
-            backgroundColor: theme.dark ? '#e0e0e0' : '#0e0e0e',
-          }
-          let finalDotStyle: ViewStyle = { ...baseDotStyle }
-
-          if (index === questionIndex) {
-            finalDotStyle = { ...finalDotStyle, ...styles.currentDot }
-          } else if (index < questionIndex) {
-            finalDotStyle = {
-              ...finalDotStyle,
-              backgroundColor: results[index] ? '#4caf50' : '#f44336',
-            }
-          }
-
-          return <View key={index} style={finalDotStyle} />
-        })}
-      </ScrollView>
-    )
-  }
-
   /**
    * Renders a single question using memoized data for a particular question type.
    * The data MUST be memoized otherwise it messes with rendering.
@@ -447,24 +621,61 @@ const Questions = () => {
         : ''
 
     const imgUrl = resolveImageUrl(rawImg)
+    const isSvg = /\.svg(\?.*)?$/i.test(imgUrl)
+    const failed = !!imageFailed[questionIndex]
 
     const imageNode = !!imgUrl ? (
-      <Surface style={styles.imagePromptSurface} elevation={2}>
-        <Icon source="image" size={48} color={theme.colors.primary} />
-        <Text variant="titleMedium" style={{ marginTop: 12, marginBottom: 4, fontWeight: 'bold' }}>
-          This question has an image
+      <Surface
+        style={[styles.imageInlineSurface, { backgroundColor: theme.colors.surface }]}
+        elevation={2}
+      >
+        <Text variant="titleSmall" style={{ marginBottom: 8, fontWeight: '600' }}>
+          Image
         </Text>
-        <Text variant="bodyMedium" style={{ marginBottom: 16, textAlign: 'center', color: '#666' }}>
-          Please open the image to view it before answering
-        </Text>
-        <Button
-          mode="contained"
-          icon="open-in-new"
-          onPress={() => Linking.openURL(imgUrl).catch(() => {})}
-          contentStyle={{ paddingVertical: 12, paddingHorizontal: 24 }}
-        >
-          Open Image in Browser
-        </Button>
+
+        {!failed ? (
+          isSvg ? (
+            <Pressable
+              style={styles.inlineImageWrap}
+              onPress={() => Linking.openURL(imgUrl).catch(() => {})}
+            >
+              <SvgUri
+                uri={imgUrl}
+                width="100%"
+                height={200}
+                onError={() => setImageFailed(prev => ({ ...prev, [questionIndex]: true }))}
+              />
+            </Pressable>
+          ) : (
+            <Pressable
+              style={styles.inlineImagePressable}
+              onPress={() => Linking.openURL(imgUrl).catch(() => {})}
+            >
+              <Image
+                source={{ uri: imgUrl }}
+                style={styles.inlineImage}
+                resizeMode="contain"
+                onError={() => setImageFailed(prev => ({ ...prev, [questionIndex]: true }))}
+              />
+            </Pressable>
+          )
+        ) : (
+          <View style={{ alignItems: 'center' }}>
+            <Text
+              variant="bodyMedium"
+              style={{ marginBottom: 12, textAlign: 'center', color: '#666' }}
+            >
+              Could not load the image inline.
+            </Text>
+            <Button
+              mode="outlined"
+              icon="open-in-new"
+              onPress={() => Linking.openURL(imgUrl).catch(() => {})}
+            >
+              Open Image in Browser
+            </Button>
+          </View>
+        )}
       </Surface>
     ) : null
 
@@ -501,124 +712,259 @@ const Questions = () => {
    */
   const renderFinalResults = () => {
     const totalCorrect = results.filter(mark => mark).length
-    const allTopics = Array.from(new Set(questions.flatMap(question => question.topics || [])))
+    const totalIncorrect = Math.max(questions.length - totalCorrect, 0)
+    const accuracy = questions.length > 0 ? Math.round((totalCorrect / questions.length) * 100) : 0
+    const topicStatsMap = new Map<string, { attempts: number; correct: number }>()
+
+    questions.forEach((question, index) => {
+      const topics = Array.isArray(question.topics)
+        ? question.topics.map(value => String(value).trim()).filter(Boolean)
+        : []
+      topics.forEach(topicName => {
+        const stats = topicStatsMap.get(topicName) ?? { attempts: 0, correct: 0 }
+        stats.attempts += 1
+        if (results[index]) stats.correct += 1
+        topicStatsMap.set(topicName, stats)
+      })
+    })
+
+    const topicStats = Array.from(topicStatsMap.entries())
+      .map(([topicName, stats]) => ({ topicName, ...stats }))
+      .sort((a, b) => b.attempts - a.attempts || a.topicName.localeCompare(b.topicName))
 
     return (
-      <Surface style={styles.resultContainer}>
+      <View style={styles.resultsContainer}>
         <Text variant="headlineMedium" style={styles.resultTitle}>
           Quiz Complete!
         </Text>
-        <Text variant="titleLarge">
+        <Text variant="titleLarge" style={styles.resultScore}>
           Score: {totalCorrect} / {questions.length}
         </Text>
 
+        <View style={styles.resultsStatsRow}>
+          <Surface style={styles.resultStat} elevation={1}>
+            <Text variant="headlineSmall" style={styles.resultStatValue}>
+              {accuracy}%
+            </Text>
+            <Text variant="labelMedium">Accuracy</Text>
+          </Surface>
+          <Surface style={styles.resultStat} elevation={1}>
+            <Text variant="headlineSmall" style={styles.correctStatValue}>
+              {totalCorrect}
+            </Text>
+            <Text variant="labelMedium">Correct</Text>
+          </Surface>
+          <Surface style={styles.resultStat} elevation={1}>
+            <Text variant="headlineSmall" style={styles.incorrectStatValue}>
+              {totalIncorrect}
+            </Text>
+            <Text variant="labelMedium">Missed</Text>
+          </Surface>
+        </View>
+
+        <Surface style={styles.analyticsSection} elevation={1}>
+          <Text variant="titleLarge" style={styles.analyticsTitle}>
+            Topic performance
+          </Text>
+          <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
+            Questions count toward every topic they were tagged with.
+          </Text>
+
+          {topicStats.length > 0 ? (
+            <View style={styles.topicMetrics}>
+              {topicStats.map(topicStat => {
+                const topicAccuracy = topicStat.attempts
+                  ? topicStat.correct / topicStat.attempts
+                  : 0
+                return (
+                  <View key={topicStat.topicName} style={styles.topicMetric}>
+                    <View style={styles.topicMetricHeader}>
+                      <Text variant="titleSmall" style={styles.topicMetricName}>
+                        {topicStat.topicName}
+                      </Text>
+                      <Text variant="labelLarge">
+                        {topicStat.correct} / {topicStat.attempts}
+                      </Text>
+                    </View>
+                    <ProgressBar progress={topicAccuracy} style={styles.topicProgress} />
+                  </View>
+                )
+              })}
+            </View>
+          ) : (
+            <Text variant="bodyMedium" style={styles.emptyTopicsText}>
+              No topic tags were included with these questions.
+            </Text>
+          )}
+        </Surface>
+
         <Button
-          mode="outlined"
-          onPress={() => setQuizTopics(!showQuizTopics)}
-          style={styles.topicsButton}
+          mode="contained"
+          onPress={handleConfirmExit}
+          icon="arrow-left"
+          disabled={isExiting}
+          style={styles.resultsExitButton}
+          contentStyle={styles.quizButtonContent}
         >
-          {showQuizTopics ? 'Hide Topics' : 'Show Topics Covered'}
+          {isExiting
+            ? 'Saving results…'
+            : resultReturnLabel}
         </Button>
 
-        {/**
-         * @TODO Expand this collapsible widget into a more complete overview.
-         * - Utilize finalAnswers to quickly show the student answer and solution for each question.
-         * - Indicate which questions were answered correctly.
-         * - Use individual question data to display which questions covered which topics.
-         */}
-        {showQuizTopics && (
-          <View style={styles.topicsContainer}>
-            <Text variant="titleMedium" style={styles.topicsHeader}>
-              Topics Covered:
-            </Text>
-            <View style={styles.topicsList}>
-              {allTopics.map((topic, index) => (
-                <View key={index} style={styles.topicRow}>
-                  <Icon source="checkbox-blank-circle" size={8} color="#666" />
-                  <Text style={styles.topicItem}>{topic}</Text>
-                </View>
-              ))}
-            </View>
+        <Button
+          mode="outlined"
+          icon={showQuestionBreakdown ? 'chevron-up' : 'chevron-down'}
+          onPress={() => setShowQuestionBreakdown(value => !value)}
+          style={styles.breakdownButton}
+          contentStyle={styles.quizButtonContent}
+        >
+          {showQuestionBreakdown ? 'Hide question breakdown' : 'Review each question'}
+        </Button>
+
+        {showQuestionBreakdown && (
+          <View style={styles.questionBreakdown}>
+            {questions.map((question, index) => {
+              const wasCorrect = Boolean(results[index])
+              const questionTopics = Array.isArray(question.topics)
+                ? question.topics.map(value => String(value).trim()).filter(Boolean)
+                : []
+              const studentAnswer = submittedAnswers[index] || 'No answer recorded'
+
+              return (
+                <Surface key={question.question_id} style={styles.questionResultCard} elevation={1}>
+                  <View style={styles.questionResultHeader}>
+                    <Text variant="labelLarge">Question {index + 1}</Text>
+                    <Chip
+                      compact
+                      icon={wasCorrect ? 'check-circle' : 'close-circle'}
+                      style={{
+                        backgroundColor: wasCorrect
+                          ? theme.dark
+                            ? '#1B5E20'
+                            : '#D4F8D4'
+                          : theme.dark
+                            ? '#8E1B1B'
+                            : '#F8D4D4',
+                      }}
+                    >
+                      {wasCorrect ? 'Correct' : 'Missed'}
+                    </Chip>
+                  </View>
+
+                  <Text variant="titleMedium" style={styles.questionResultPrompt}>
+                    {question.prompt}
+                  </Text>
+
+                  <View style={styles.questionTopicChips}>
+                    {questionTopics.length > 0 ? (
+                      questionTopics.map(topicName => (
+                        <Chip key={topicName} compact icon="tag-outline">
+                          {topicName}
+                        </Chip>
+                      ))
+                    ) : (
+                      <Text variant="bodySmall" style={{ color: theme.colors.onSurfaceVariant }}>
+                        No topic tags
+                      </Text>
+                    )}
+                  </View>
+
+                  <View style={styles.answerReview}>
+                    <Text variant="labelMedium" style={{ color: theme.colors.onSurfaceVariant }}>
+                      Your answer
+                    </Text>
+                    <Text variant="bodyMedium">{studentAnswer}</Text>
+                    {!wasCorrect && (
+                      <>
+                        <Text
+                          variant="labelMedium"
+                          style={[
+                            styles.correctAnswerLabel,
+                            { color: theme.colors.onSurfaceVariant },
+                          ]}
+                        >
+                          Correct answer
+                        </Text>
+                        <Text variant="bodyMedium">{question.answer}</Text>
+                      </>
+                    )}
+                  </View>
+                </Surface>
+              )
+            })}
           </View>
         )}
-      </Surface>
+      </View>
     )
   }
-  // console.log('Render state:', { uid, authReady, loading })
-
   /* Actual rendered components start here */
+  let content: React.ReactNode
   if (loading) {
-    return (
+    content = (
       <View style={{ ...styles.container, marginTop: '50%', alignItems: 'center' }}>
         <Text variant="titleLarge">Loading questions...</Text>
-        <ActivityIndicator size={'large'} />
+        <LoadingIndicator />
       </View>
     )
   } else if (quizComplete) {
-    return (
-      <View style={styles.container}>
+    content = (
+      <ScrollView
+        style={[styles.container, { backgroundColor: theme.colors.background }]}
+        contentContainerStyle={styles.resultsScrollContent}
+      >
         {renderFinalResults()}
-        <Button onPress={handleConfirmExit} icon="arrow-left">
-          Back to Lessons
-        </Button>
-      </View>
+      </ScrollView>
     )
   } else {
-    return (
-      <View style={styles.container}>
-        {/* Actual question rendering */}
+    content = (
+      <ScrollView
+        style={[styles.container, { backgroundColor: theme.colors.background }]}
+        contentContainerStyle={styles.fullScrollContent}
+        keyboardShouldPersistTaps="handled"
+      >
         {memoizedQuestion && renderQuestion(memoizedQuestion)}
+
         {!showFeedback ? (
           <Button
             mode="contained"
             onPress={handleSubmitAnswer}
-            disabled={!currentAnswer}
+            disabled={!currentAnswer || isSubmitting}
             style={styles.submitButton}
+            contentStyle={styles.quizButtonContent}
           >
-            Submit Answer
+            {isSubmitting ? 'Saving answer…' : 'Submit Answer'}
           </Button>
         ) : (
-          <Button mode="contained" onPress={handleNextQuestion} style={styles.submitButton}>
+          <Button
+            mode="contained"
+            onPress={handleNextQuestion}
+            style={styles.submitButton}
+            contentStyle={styles.quizButtonContent}
+          >
             {questionIndex < questions.length - 1 ? 'Next Question' : 'See Results'}
           </Button>
         )}
 
-        {/* Modal for giving up */}
-        <Portal>
-          <Dialog visible={showExitDialog} onDismiss={() => setExitDialog(false)}>
-            <Dialog.Title>Exit Lesson?</Dialog.Title>
-            <Dialog.Content>
-              <Text variant="bodyMedium" style={{ textAlign: 'center' }}>
-                Are you sure you want to exit?
-              </Text>
-              {/* <Text variant="bodyLarge" style={{ fontWeight: 'bold', textAlign: 'center' }}>
-                Incomplete questions will be marked as incorrect!
-              </Text> */}
-            </Dialog.Content>
-            <Dialog.Actions style={{ justifyContent: 'space-between' }}>
-              <Button
-                mode="contained"
-                onPress={() => setExitDialog(false)}
-                contentStyle={styles.giveUpButton}
-              >
-                Stay
-              </Button>
-              <Button
-                icon="alert"
-                mode="contained"
-                onPress={handleConfirmExit}
-                style={{ backgroundColor: theme.colors.error }}
-                contentStyle={styles.giveUpButton}
-                labelStyle={{ color: theme.colors.onError }}
-              >
-                Exit
-              </Button>
-            </Dialog.Actions>
-          </Dialog>
-        </Portal>
-      </View>
+      </ScrollView>
     )
   }
+
+  return (
+    <>
+      <BlurTargetView ref={blurTarget} style={styles.container}>
+        {content}
+      </BlurTargetView>
+      <QuizExitDialog
+        visible={showExitDialog}
+        quizComplete={quizComplete}
+        isExiting={isExiting}
+        isSubmitting={isSubmitting}
+        blurTarget={blurTarget}
+        onDismiss={() => setExitDialog(false)}
+        onConfirm={handleConfirmExit}
+      />
+    </>
+  )
 }
 
 const styles = StyleSheet.create({
@@ -626,71 +972,142 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
-  resultContainer: {
-    margin: 16,
-    padding: 24,
-    borderRadius: 8,
-    alignItems: 'center',
+  resultsScrollContent: {
+    padding: 16,
+    paddingBottom: 36,
   },
-  topicsContainer: {
-    marginTop: 16,
+  resultsContainer: {
     width: '100%',
   },
 
-  // Progress dots
-  dotsContainer: {
-    padding: 16,
-  },
-  allDots: {
-    justifyContent: 'center',
-    alignItems: 'center',
-    gap: 8,
-    flexGrow: 1,
-  },
-  dot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-  },
-  currentDot: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    backgroundColor: '#2196f3',
-  },
-
-  // Topics section
-  topicsHeader: {
-    marginBottom: 8,
-  },
-  topicsList: {
-    marginTop: 8,
-  },
-  topicRow: {
+  // Header
+  headerQuit: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    marginBottom: 8,
+    gap: 4,
+    paddingVertical: 6,
+    paddingRight: 8,
   },
-  topicItem: {
-    fontSize: 16,
-    color: '#666',
+  headerActionPressed: {
+    opacity: 0.55,
+  },
+  headerProgress: {
+    marginRight: 4,
+    fontVariant: ['tabular-nums'],
+  },
+
+  // Results
+  resultsStatsRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 20,
+    marginBottom: 20,
+    width: '100%',
+  },
+  resultStat: {
+    flex: 1,
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 14,
+    borderRadius: 12,
+  },
+  resultStatValue: {
+    fontWeight: '700',
+  },
+  correctStatValue: {
+    color: '#2E7D32',
+    fontWeight: '700',
+  },
+  incorrectStatValue: {
+    color: '#C62828',
+    fontWeight: '700',
+  },
+  resultScore: {
+    textAlign: 'center',
+  },
+  analyticsSection: {
+    padding: 18,
+    borderRadius: 16,
+  },
+  analyticsTitle: {
+    fontWeight: '700',
+    marginBottom: 4,
+  },
+  topicMetrics: {
+    gap: 16,
+    marginTop: 18,
+  },
+  topicMetric: {
+    gap: 7,
+  },
+  topicMetricHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  topicMetricName: {
+    flex: 1,
+  },
+  topicProgress: {
+    height: 7,
+    borderRadius: 4,
+  },
+  emptyTopicsText: {
+    marginTop: 16,
+  },
+  breakdownButton: {
+    marginTop: 16,
+  },
+  questionBreakdown: {
+    gap: 12,
+    marginTop: 12,
+  },
+  questionResultCard: {
+    padding: 16,
+    borderRadius: 14,
+  },
+  questionResultHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  questionResultPrompt: {
+    marginTop: 14,
+    lineHeight: 23,
+  },
+  questionTopicChips: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 7,
+    marginTop: 14,
+  },
+  answerReview: {
+    gap: 4,
+    marginTop: 16,
+  },
+  correctAnswerLabel: {
+    marginTop: 10,
   },
 
   // Buttons
   submitButton: {
     margin: 16,
   },
-  topicsButton: {
-    marginTop: 16,
+  quizButtonContent: {
+    paddingHorizontal: 20,
+    paddingVertical: 7,
   },
-  giveUpButton: {
-    paddingHorizontal: 5,
+  resultsExitButton: {
+    marginTop: 18,
   },
 
   // Text elements
   resultTitle: {
-    marginBottom: 16,
+    marginBottom: 6,
+    textAlign: 'center',
+    fontWeight: '700',
   },
   questionImage: {
     width: '100%',
@@ -698,7 +1115,6 @@ const styles = StyleSheet.create({
     marginTop: 8,
     marginBottom: 16,
     borderRadius: 6,
-    backgroundColor: '#f5f5f5',
   },
 
   imagePromptSurface: {
@@ -706,7 +1122,28 @@ const styles = StyleSheet.create({
     padding: 24,
     borderRadius: 12,
     alignItems: 'center',
-    backgroundColor: '#fff',
+  },
+  imageInlineSurface: {
+    margin: 16,
+    padding: 16,
+    borderRadius: 12,
+  },
+  inlineImageWrap: {
+    width: '100%',
+    height: 200,
+    borderRadius: 8,
+    overflow: 'hidden',
+  },
+  inlineImage: {
+    width: '100%',
+    height: 200,
+    borderRadius: 8,
+  },
+  inlineImagePressable: {
+    width: '100%',
+  },
+  fullScrollContent: {
+    paddingBottom: 32,
   },
 })
 

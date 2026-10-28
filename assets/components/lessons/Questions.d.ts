@@ -1,5 +1,6 @@
 export interface Question {
   question_id: number
+  lesson_id?: number | null
   question_type: 'multiple-choice' | 'rearrange'
   prompt: string
   snippet?: string

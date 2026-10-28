@@ -1,8 +1,9 @@
 import React, { useState } from 'react'
 import { View, StyleSheet } from 'react-native'
-import { TextInput, Button, Text, ActivityIndicator } from 'react-native-paper'
+import { TextInput, Button, Text } from 'react-native-paper'
 import { useRouter } from 'expo-router'
 import { supabase } from '@/supabaseClient' // Add this line
+import LoadingButton from '@/assets/components/common/LoadingButton'
 
 const Login = () => {
   const [email, setEmail] = useState('')
@@ -40,7 +41,7 @@ const Login = () => {
           })
         }
 
-        router.replace('../classes')
+        router.replace('/(tabs)/classes')
       } else {
         const data = await loginResponse.json()
         alert(data.error || 'Login failed')
@@ -75,7 +76,7 @@ const Login = () => {
         left={<TextInput.Icon icon="lock" />}
         secureTextEntry
       />
-      <Button
+      <LoadingButton
         mode="contained"
         onPress={handleLogin}
         style={styles.button}
@@ -83,9 +84,9 @@ const Login = () => {
         disabled={loggingIn}
       >
         Login
-      </Button>
+      </LoadingButton>
       <View style={styles.footer}>
-        <Text style={styles.footerText}>Don't have an account?</Text>
+        <Text style={styles.footerText}>{"Don't have an account?"}</Text>
         <Button mode="text" onPress={() => router.replace(`./register`)}>
           Sign Up
         </Button>

@@ -1,5 +1,5 @@
 import React, { createContext, useState, useEffect, useContext, type ReactNode } from 'react'
-import CookieManager from '@react-native-cookies/cookies'
+import { supabase } from '@/supabaseClient'
 
 interface AuthContextType {
   authCookie: string | null
@@ -13,20 +13,19 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [authCookie, setAuthCookie] = useState<string | null>(null)
 
   useEffect(() => {
-    // Load cookies on mount
     ;(async () => {
-      const cookies = await CookieManager.get('https://your-api-url')
-      setAuthCookie(cookies.session?.value || null)
+      const { data } = await supabase.auth.getSession()
+      setAuthCookie(data.session?.access_token ?? null)
     })()
   }, [])
 
   const updateAuthCookie = async () => {
-    const cookies = await CookieManager.get('https://your-api-url')
-    setAuthCookie(cookies.session?.value || null)
+    const { data } = await supabase.auth.getSession()
+    setAuthCookie(data.session?.access_token ?? null)
   }
 
   const clearAuthCookie = async () => {
-    await CookieManager.clearAll()
+    await supabase.auth.signOut()
     setAuthCookie(null)
   }
 

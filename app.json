@@ -6,7 +6,6 @@
     "orientation": "portrait",
     "scheme": "knowledge-grapht",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": true,
     "icon": "./assets/images/icons/ios-light.png",
     "ios": {
       "supportsTablet": true,
@@ -33,6 +32,7 @@
     },
     "plugins": [
       "expo-router",
+      ["expo-notifications"],
       [
         "expo-splash-screen",
         {
